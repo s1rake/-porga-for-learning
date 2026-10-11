@@ -3026,6 +3026,7 @@
         .friend-reward-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; align-items: end; margin: 8px 0; }
         .friend-reward-row label { min-width: 0; }
         .friend-reward-row input, .friend-reward-row select, .friend-challenge-composer select, .friend-challenge-composer input { width: 100%; min-height: 42px; }
+        .friend-reward-row [hidden] { display: none !important; }
         .social-friend-program-counts { margin: 10px 0 0; color: var(--text2); line-height: 1.7; }
         .social-friend-program #downloadFriendProgram { margin-top: 18px; }
         .social-friend-profile-actions { display: grid; gap: 12px; min-width: 0; }
@@ -11717,7 +11718,7 @@
             if (modal) modal.remove();
         }
         function getFriendRewardMarkup(index, maxThreshold) {
-            return '<div class="friend-reward-row" data-reward-row="' + index + '"><label><span><input type="checkbox" data-reward-enabled="' + index + '"> Награда ' + (index + 1) + '</span><input type="number" min="1" max="' + maxThreshold + '" value="' + Math.min(maxThreshold, (index + 1) * Math.ceil(maxThreshold / 3)) + '" data-reward-threshold="' + index + '" aria-label="Порог правильных ответов"></label><label>Награда<select data-reward-type="' + index + '"><option value="score">⭐ Очки</option><option value="crystals">💎 Кристаллы</option><option value="sticker">🎴 Стикер</option><option value="premium">👑 Премиум-пропуск</option></select></label><label><span data-reward-value-label="' + index + '">Количество</span><input type="number" min="1" max="100000" value="' + (index + 1) * 50 + '" data-reward-value="' + index + '"><input type="hidden" data-reward-sticker="' + index + '"><button type="button" class="btn btn-sm btn-outline" data-reward-sticker-picker="' + index + '" hidden>Выбрать стикер</button></label></div>';
+            return '<div class="friend-reward-row" data-reward-row="' + index + '"><label><span><input type="checkbox" data-reward-enabled="' + index + '"> Награда ' + (index + 1) + '</span><input type="number" min="1" max="' + maxThreshold + '" value="' + Math.min(maxThreshold, (index + 1) * Math.ceil(maxThreshold / 3)) + '" data-reward-threshold="' + index + '" aria-label="Порог правильных ответов"></label><label>Награда<select data-reward-type="' + index + '"><option value="score">⭐ Очки</option><option value="crystals">💎 Кристаллы</option><option value="sticker">🎴 Стикер</option><option value="premium" disabled>👑 Премиум-пропуск (проверяем доступность…)</option></select><small class="hint" data-premium-availability="' + index + '">Проверяем доступность премиум-пропуска…</small></label><label><span data-reward-value-label="' + index + '">Количество</span><input type="number" min="1" max="100000" value="' + (index + 1) * 50 + '" data-reward-value="' + index + '"><input type="hidden" data-reward-sticker="' + index + '"><button type="button" class="btn btn-sm btn-outline" data-reward-sticker-picker="' + index + '" hidden>Выбрать стикер</button></label></div>';
         }
         function openFriendChallengeComposer(receiverId, receiverName, kind) {
             if (!socialUser || !supabaseClient) { toast('Войди в аккаунт, чтобы отправлять вызовы.'); return; }
@@ -11729,6 +11730,7 @@
             var isDuel = kind === 'duel';
             var title = isDuel ? '⚔️ Вызвать на дуэль' : '🎯 Создать испытание';
             var defaultModes = isDuel ? ['quiz', 'input', 'cloze'] : ['card', 'quiz', 'input', 'cloze'];
+            var premiumRewardAvailability = 'checking';
             var modal = document.createElement('div');
             modal.id = 'friendChallengeComposer';
             modal.className = 'modal-overlay';
@@ -11776,6 +11778,44 @@
                     modal.querySelector('[data-reward-value-label="' + index + '"]').textContent = isSticker ? 'Стикер' : (isPremium ? 'Выдаётся один раз' : 'Количество');
                 };
             });
+            if (!isDuel) {
+                supabaseClient.rpc('get_friend_challenge_premium_eligibility', { p_receiver_id: receiverId }).then(function (result) {
+                    if (result.error) throw result.error;
+                    if (!document.body.contains(modal)) return;
+                    premiumRewardAvailability = result.data;
+                    var isAvailable = premiumRewardAvailability === 'available';
+                    modal.querySelectorAll('[data-reward-type] option[value="premium"]').forEach(function (option) {
+                        option.disabled = !isAvailable;
+                        option.textContent = isAvailable
+                            ? '👑 Премиум-пропуск'
+                            : premiumRewardAvailability === 'has_premium'
+                                ? '👑 Премиум-пропуск (у друга уже есть)'
+                                : premiumRewardAvailability === 'already_assigned'
+                                    ? '👑 Премиум-пропуск (уже назначен в другом испытании)'
+                                    : '👑 Премиум-пропуск (недоступен)';
+                    });
+                    modal.querySelectorAll('[data-premium-availability]').forEach(function (hint) {
+                        hint.textContent = isAvailable
+                            ? 'Друг может получить премиум-пропуск в этом испытании.'
+                            : premiumRewardAvailability === 'has_premium'
+                                ? 'У друга уже есть премиум-пропуск.'
+                                : premiumRewardAvailability === 'already_assigned'
+                                    ? 'Друг уже указан получателем премиум-пропуска в другом активном испытании.'
+                                    : 'Премиум-пропуск этому другу сейчас недоступен.';
+                    });
+                }).catch(function (error) {
+                    console.error('Не удалось проверить доступность премиум-пропуска:', error);
+                    if (!document.body.contains(modal)) return;
+                    premiumRewardAvailability = 'unavailable';
+                    modal.querySelectorAll('[data-reward-type] option[value="premium"]').forEach(function (option) {
+                        option.disabled = true;
+                        option.textContent = '👑 Премиум-пропуск (не удалось проверить)';
+                    });
+                    modal.querySelectorAll('[data-premium-availability]').forEach(function (hint) {
+                        hint.textContent = 'Не удалось проверить возможность выдачи премиум-пропуска. Повтори попытку позже.';
+                    });
+                });
+            }
             modal.querySelectorAll('[data-reward-sticker-picker]').forEach(function (button) {
                 button.onclick = function () {
                     var index = this.getAttribute('data-reward-sticker-picker');
@@ -11816,6 +11856,9 @@
                             } else if (type === 'premium') reward.value = 1;
                             else reward.value = Number(modal.querySelector('[data-reward-value="' + i + '"]').value);
                             rewards.push(reward);
+                        }
+                        if (rewards.some(function (reward) { return reward.type === 'premium'; }) && premiumRewardAvailability !== 'available') {
+                            throw new Error('Этому другу нельзя выдать премиум-пропуск: он уже есть или назначен в другом активном испытании.');
                         }
                         if (!rewards.length) throw new Error('Добавь хотя бы одну награду.');
                         if (rewards.some(function (reward) { return !Number.isInteger(reward.threshold) || reward.threshold < 1 || reward.threshold > tasks.length; })) throw new Error('Порог каждой награды должен быть не выше числа заданий в тесте.');
